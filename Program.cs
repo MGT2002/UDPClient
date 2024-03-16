@@ -3,6 +3,8 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 
+const int Timeout = 3000;
+const int MaxTries = 5;
 const int DefaultEchoPort = 7;
 
 if (args.Length < 2 || args.Length > 3)
@@ -11,25 +13,48 @@ if (args.Length < 2 || args.Length > 3)
 string server = args[0];
 int servPort = args.Length == 3 ? int.Parse(args[2]) : DefaultEchoPort;
 byte[] sendPacket = Encoding.ASCII.GetBytes(args[1]);
+byte[] rcvPacket = new byte[sendPacket.Length];
 
-try
+using Socket sock = new(AddressFamily.InterNetwork, SocketType.Dgram,
+    ProtocolType.Udp);
+sock.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReceiveTimeout,
+    Timeout);
+EndPoint remoteEndPoint = new IPEndPoint(Dns.GetHostEntry(server, AddressFamily.InterNetwork)
+    .AddressList[0], servPort);
+
+int tries = 0;
+bool responseReceived = false;
+
+do
 {
-    using UdpClient client = new();
+    sock.SendTo(sendPacket, remoteEndPoint);
+    Console.WriteLine("Sent {0} bytes to the server!", sendPacket.Length);
 
-    client.Send(sendPacket, sendPacket.Length, server, servPort);
-    $"Sent {sendPacket.Length} bytes to the server!".Log();
+    try
+    {
+        sock.ReceiveFrom(rcvPacket, ref remoteEndPoint);
+        responseReceived = true;
 
-    IPEndPoint remote = null!;
-    byte[] rcvPacket = client.Receive(ref remote);
+    }
+    catch (SocketException se)
+    {
+        if (se.ErrorCode == 10060)
+            $"Timed out, {MaxTries - tries - 1} more tries".Log();
+        else
+            se.ErrorCode.Log(se.Message);
+    }
+    catch (Exception e)
+    {
+        e.Message.Log();
+    }
+    finally
+    {
+        tries++;
+    }
+} while (!responseReceived && tries < MaxTries);
 
-    $"Received {rcvPacket.Length} bytes from {remote}:"
-        .Log(Encoding.ASCII.GetString(rcvPacket));
-}
-catch (SocketException e)
-{
-    e.ErrorCode.Log(e.Message);
-}
-catch (Exception e)
-{
-    e.Message.Log();
-}
+if (responseReceived)
+    $"Received {rcvPacket.Length} bytes from {remoteEndPoint}:"
+    .Log(Encoding.ASCII.GetString(rcvPacket));
+else
+    "No response - - giving up.".Log();

@@ -1,1 +1,1 @@
-Simple UDP client via c# 
+Socket version of UDP client with timeout option.
